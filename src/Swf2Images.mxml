@@ -1,0 +1,503 @@
+<?xml version="1.0" encoding="utf-8"?>
+<s:WindowedApplication xmlns:fx="http://ns.adobe.com/mxml/2009" 
+					   xmlns:s="library://ns.adobe.com/flex/spark" 
+					   width="800" height="600"
+					   creationComplete="onCreationComplete()">
+	<fx:Script>
+		<![CDATA[
+			import com.greensock.TweenLite;
+			
+			import mx.controls.Alert;
+			import mx.events.CloseEvent;
+			import mx.graphics.codec.IImageEncoder;
+			import mx.graphics.codec.JPEGEncoder;
+			import mx.graphics.codec.PNGEncoder;
+			
+			
+			private var selectingFile:File;
+			private var sourceFileF:File;
+			private var destFolderF:File;
+			
+			private var _loader:Loader;
+			
+			private var frames:Vector.<FrameData>;
+			private var convertCount:int;
+			private var convertIndex:int;
+			
+			private var frameDataXRange:Array;
+			private var frameDataYRange:Array;
+			
+			private var frameDataMostL:int;
+			private var frameDataMostR:int;
+			private var frameDataMostT:int;
+			private var frameDataMostB:int;
+			
+			private var frameDataMostLF:int;
+			private var frameDataMostRF:int;
+			private var frameDataMostTF:int;
+			private var frameDataMostBF:int;
+			
+			private var isConvertCancelled:Boolean;
+			
+			private var isConverting:Boolean = false;
+			
+			
+			private function onCreationComplete():void{
+				this.reloadConfig();
+			}
+			
+			private function reloadConfig():void{
+				ConfigData.sharedInstance().read();
+				sourceLocationFied.text = ConfigData.sharedInstance().sourceLocaltion;
+				destLocationFied.text = ConfigData.sharedInstance().destLocation;
+				
+				if(ConfigData.sharedInstance().sourceLocaltion){
+					sourceFileF = new File(ConfigData.sharedInstance().sourceLocaltion);
+				}
+				if(ConfigData.sharedInstance().destLocation){
+					destFolderF = new File(ConfigData.sharedInstance().destLocation);
+				}
+			}
+			
+			private function onSelectSourceLocaltion():void{
+				selectingFile = new File();
+				selectingFile.addEventListener(Event.SELECT, onSourceLocaltionSelected);
+				selectingFile.browseForOpen("Open SWF file", [new FileFilter("SWF file", "*.swf")]);
+			}
+			
+			private function onSelectDestLocaltion():void{
+				selectingFile = new File();
+				selectingFile.addEventListener(Event.SELECT, onDestLocaltionSelected);
+				selectingFile.browseForDirectory("Output Location");
+			}
+			
+			private function onSourceLocaltionSelected(e:Event):void{
+				selectingFile.removeEventListener(Event.SELECT, onSourceLocaltionSelected);
+				ConfigData.sharedInstance().sourceLocaltion = selectingFile.nativePath;
+				ConfigData.sharedInstance().save();
+				selectingFile = null;
+				this.reloadConfig();
+			}
+			
+			private function onDestLocaltionSelected(e:Event):void{
+				selectingFile.removeEventListener(Event.SELECT, onDestLocaltionSelected);
+				ConfigData.sharedInstance().destLocation = selectingFile.nativePath;
+				ConfigData.sharedInstance().save();
+				selectingFile = null;
+				this.reloadConfig();
+			}
+			
+			
+			private function startConvert():void{
+				if(isConverting){
+					isConvertCancelled = true;
+					return;
+				}
+				
+				if(! sourceFileF || ! destFolderF){
+					Alert.show("Please select the locations first");
+					return;
+				}
+				
+				if(this.getFinalScale() <= 0){
+					Alert.show("The scale is 0, nothing to do");
+					return;
+				}
+				
+				if(destFolderF.exists){
+					if(destFolderF.isDirectory){
+						Alert.show("Output folder already exist, delete it and continue?", "Delete Confirmation", 
+							Alert.YES | Alert.NO, null, onConfirmOverwrite);
+					}else{
+						
+						Alert.show("Output folder exist but is not a directory.");
+					}
+					
+				}else{
+					this.doConvert();
+				}
+			}
+			
+			private function onConfirmOverwrite(e:CloseEvent):void{
+				if(e.detail == Alert.YES){
+					try{
+						destFolderF.deleteDirectory(true);
+						this.doConvert();
+					}catch(err:Error){
+						Alert.show("Unable to delete the output folder. You can delete manually or choose another one.");
+					}
+				}
+			}
+			
+			private function doConvert():void{
+				this.convertStart();
+				
+				isConvertCancelled = false;
+				this.mouseEnabled = false;
+				
+				try{
+					destFolderF.createDirectory();
+					
+					logField.text = "";
+					
+					this.loadSWF();
+				}catch(err:Error){
+					Alert.show("Unable to create directory.");
+				}
+			}
+			
+			
+			private function loadSWF():void{
+				_loader = new Loader();
+				var dispatcher:LoaderInfo = _loader.contentLoaderInfo;
+				dispatcher.addEventListener(Event.COMPLETE, completeHandler, false, 0, true);
+				dispatcher.addEventListener(IOErrorEvent.IO_ERROR, errorHandler, false, 0, true);
+				dispatcher.addEventListener(ProgressEvent.PROGRESS, progressHandler, false, 0, true);
+				var _lc:LoaderContext = new LoaderContext(false, ApplicationDomain.currentDomain, null);
+				logField.appendText("Loading ....\n");
+				_loader.load(new URLRequest(sourceFileF.url), _lc);
+			}
+			
+			private function completeHandler(e:Event):void {
+				logField.appendText("\n");
+				logField.appendText("Load was successful\n");
+				
+				this.mouseEnabled = true;
+				this.loadedToConvert();
+			}
+			
+			private function progressHandler(e:ProgressEvent):void {
+				if(e.bytesTotal > 0){
+					var str:String = (e.bytesLoaded / e.bytesTotal * 100) +"";
+					if(str.length > 3){
+						str = str.substr(0, 3);
+					}
+					if(str.indexOf(".") == 2){
+						str = str.substr(0, 2);
+					}
+					logField.appendText(str +"%    ");
+				}
+			}
+			
+			private function errorHandler(e:Event):void {
+				logField.appendText("\n");
+				logField.appendText("Load error: "+ e);
+				
+				this.mouseEnabled = true;
+				
+				Alert.show("\nLoad error:\n"+ e);
+				
+				this.convertError();
+			}
+			
+			private function loadedToConvert():void{
+				var mc:MovieClip = null;
+				if(aslinkCheckBox.selected){
+					if(aslink.text && aslink.text.length > 0){
+						try{
+							var cls:Class = _loader.contentLoaderInfo.applicationDomain.getDefinition(aslink.text) as Class;
+							mc = new cls();
+						}catch(err:Error){
+							
+						}
+					}
+				}else{
+					mc = _loader.content as MovieClip;
+				}
+				
+				if(! mc){
+					logField.appendText("Not a MovieClip\n");
+					Alert.show("Note a MovieClip, cannot convert");
+					convertError();
+					return;
+				}
+				
+				frames = FrameDataRender.getFrameDatasByMC(mc, this.getFinalScale(), true);
+				
+				if(frameSkipCheckBox.selected){
+					var framsSkip:Vector.<FrameData> = new Vector.<FrameData>();
+					for(var k:int=0; k<frames.length; k+=2){
+						framsSkip.push(frames[k]);
+					}
+					frames = framsSkip;
+				}
+				
+				frameDataXRange = [8191, -8191];
+				frameDataYRange = [8191, -8191];
+				frameDataMostL = 8191;
+				frameDataMostR = -8191;
+				frameDataMostT = 8191;
+				frameDataMostR = -8191;
+				
+				logField.appendText("\nOffsets:\n");
+				logField.appendText("---------------------------------------\n");
+				
+				for(var i:int=0; i<frames.length; i++){
+					var fd:FrameData = frames[i];
+					
+					var sn:String = (i + 1) +"";
+					if(sn.length < 2){
+						sn = " "+ sn;
+					}
+					sn = "[" + sn + "]";
+					logField.appendText(sn +":  ");
+					if(fd){
+						logField.appendText(fd.x +", "+ fd.y);
+					}else{
+						logField.appendText("Unkown");
+					}
+					logField.appendText("\n");
+					
+					if(fd.x < frameDataXRange[0]){
+						frameDataXRange[0] = fd.x;
+					}
+					if(fd.x > frameDataXRange[1]){
+						frameDataXRange[1] = fd.x;
+					}
+					
+					if(fd.y < frameDataYRange[0]){
+						frameDataYRange[0] = fd.y;
+					}
+					if(fd.y > frameDataYRange[1]){
+						frameDataYRange[1] = fd.y;
+					}
+					
+					if(fd.bmpdata){
+						if(fd.x < frameDataMostL){
+							frameDataMostL = fd.x;
+							frameDataMostLF = i + 1;
+						}
+						if(fd.x + fd.bmpdata.width > frameDataMostR){
+							frameDataMostR = fd.x + fd.bmpdata.width;
+							frameDataMostRF = i + 1;
+						}
+						if(fd.y < frameDataMostT){
+							frameDataMostT = fd.y;
+							frameDataMostTF = i + 1;
+						}
+						if(fd.y + fd.bmpdata.height > frameDataMostB){
+							frameDataMostB = fd.y + fd.bmpdata.height;
+							frameDataMostBF = i + 1;
+						}
+					}
+				}
+				
+				logField.appendText("---------------------------------------\n");
+				
+				logField.appendText("\nMost Left, Right, Top, Bottom frames: "
+					+ frameDataMostLF +","+ frameDataMostRF +","
+					+ frameDataMostTF +","+ frameDataMostBF +".");
+				logField.appendText("\n");
+				
+				convertCount = frames.length;
+				convertIndex = 0;
+				
+				logField.appendText("\n");
+				logField.appendText("Totoal "+ convertCount +" images to convert.\n");
+				logField.appendText("Converting ....    ");
+				
+				TweenLite.delayedCall(0.5, convertAFrameData);
+			}
+			
+			private function convertAFrameData():void{
+				if(convertIndex >= convertCount){
+					this.convertCompleted();
+					return;
+				}
+				
+				if(isConvertCancelled){
+					this.convertCancelled();
+					return;
+				}
+				
+				var fd:FrameData = frames[convertIndex];
+				if(! fd){
+					logField.appendText("\nNo data at "+ (convertIndex + 1) +"\n");
+					this.convertNext();
+					return;
+				}
+				
+				var bmpd:BitmapData = fd.bmpdata;
+				if(! bmpd){
+					bmpd = new BitmapData(10, 10, true, 0);
+				}
+				
+				if(fixedSizeCheckBox.selected){
+					var w:int = frameDataMostR - frameDataMostL;
+					var h:int = frameDataMostB - frameDataMostT;
+					var tmp:BitmapData = bmpd;
+					bmpd = new BitmapData(w, h, true, 0);
+					var s:Number = this.getFinalScale();
+					var tx:Number = fd.x - frameDataXRange[0];
+					var ty:Number = fd.y - frameDataYRange[0];
+					bmpd.draw(tmp, new Matrix(1, 0, 0, 1, tx, ty));
+				}
+				
+				if(! bmpd){
+					logField.appendText("\nNo bitmap data at "+ (convertIndex + 1) +"\n");
+					this.convertNext();
+					return;
+				}
+				
+				var encoder:IImageEncoder = null;
+				var fileExt:String;
+				if(jpgFormat.selected){
+					encoder = new JPEGEncoder(jpgQualitySlider.value);
+					fileExt = "jpg";
+				}else{
+					encoder = new PNGEncoder();
+					fileExt = "png";
+				}
+				var out:ByteArray = encoder.encode(bmpd);
+				var f:File = destFolderF.resolvePath((convertIndex + 1) +"."+ fileExt);
+				try{
+					var fs:FileStream = new FileStream();
+					fs.open(f, FileMode.WRITE);
+					fs.writeBytes(out);
+					fs.close();
+				}catch(err:Error){
+					logField.appendText("\nError "+ (convertIndex + 1) +"\n");
+				}
+				logField.appendText((convertIndex + 1) +"  ");
+				
+				this.convertNext();
+			}
+			
+			private function convertNext():void{
+				convertIndex ++;
+				TweenLite.delayedCall(0.2, convertAFrameData);
+			}
+			
+			
+			private function convertStart():void{
+				isConverting = true;
+				convertBtn.label = "Stop";
+			}
+			
+			private function convertError():void{
+				isConverting = false;
+				convertBtn.label = "Start Convert";
+			}
+			
+			private function convertCancelled():void{
+				logField.appendText("\nConvert Cancelled\n");
+				isConverting = false;
+				convertBtn.label = "Start Convert";
+			}
+			
+			private function convertCompleted():void{
+				logField.appendText("\nConvert Completed\n");
+				isConverting = false;
+				convertBtn.label = "Start Convert";
+				
+				Alert.show("Convert completed");
+			}
+			
+			
+			private function getFinalScale():Number{
+				if(scaleCheckBox.selected){
+					return theScale.value / 100.0;
+				}
+				return 1;
+			}
+			
+			private function showAbout():void{
+				var str:String = "Swf2Images\n\nversion " + appVersionNumber() +"\n\n"+
+					"Convert SWF to images frame by frame.\n" +
+					"Visit http://landinggearup.com for support.\n\n";
+				Alert.show(str, "About Swf2Images");
+			}
+			
+			
+			private function openOutputFolder():void{
+				if(destFolderF && destFolderF.exists){
+					destFolderF.openWithDefaultApplication();
+				}
+			}
+			
+			
+			public static function appVersionNumber():String{
+				// http://inflagrantedelicto.memoryspiral.com/2009/02/quick-tip-display-application-version-in-your-air-app/
+				var appXml:XML = NativeApplication.nativeApplication.applicationDescriptor;
+				var ns:Namespace = appXml.namespace();
+				var appVersion:String = appXml.ns::versionNumber[0];
+				return appVersion;
+			}
+			
+		]]>
+	</fx:Script>
+	
+	<fx:Declarations>
+		<!-- Place non-visual elements (e.g., services, value objects) here -->
+	</fx:Declarations>
+	
+	<s:VGroup horizontalAlign="center" width="800">
+		<s:BorderContainer width="800" height="140" borderVisible="true" borderColor="#888888" borderStyle="solid">
+			<s:VGroup paddingLeft="10" paddingTop="10" paddingBottom="10" paddingRight="10" >
+				<s:HGroup verticalAlign="middle" paddingBottom="10">
+					<s:Label text="SWF file to convert:" width="150"></s:Label>
+					<s:TextInput id="sourceLocationFied" editable="false" width="500"></s:TextInput>
+					<s:Button label="Select ..." click="onSelectSourceLocaltion()"></s:Button>
+				</s:HGroup>
+				<s:HGroup verticalAlign="middle" paddingBottom="10">
+					<s:Label text="Output folder:" width="150"></s:Label>
+					<s:TextInput id="destLocationFied" editable="false" width="500"></s:TextInput>
+					<s:Button label="Select ..." click="onSelectDestLocaltion()"></s:Button>
+				</s:HGroup>
+				<s:HGroup>
+					<s:VGroup>
+						<s:HGroup>
+							<s:RadioButton id="pngFormat" label="PNG" groupName="Format" selected="true"/>
+						</s:HGroup>
+						<s:HGroup>
+							<s:RadioButton id="jpgFormat" label="JPG" groupName="Format"/>
+							<s:HGroup verticalAlign="bottom" paddingTop="5"
+								visible="{jpgFormat.selected}" includeInLayout="{jpgFormat.selected}">
+								<s:Label text=" Quality:"/>
+								<s:HSlider id="jpgQualitySlider" width="80" minimum="10" maximum="100" value="80"/>
+							</s:HGroup>
+						</s:HGroup>
+					</s:VGroup>
+					<s:Label text="|" paddingLeft="25" paddingRight="25" fontSize="40" fontFamily="Arial" color="#555555" scaleX="0.3"/>
+					<s:VGroup>
+						<s:CheckBox id="fixedSizeCheckBox" label="Fixed Image Size"/>
+					</s:VGroup>
+					<s:Label text="|" paddingLeft="25" paddingRight="25" fontSize="40" fontFamily="Arial" color="#555555" scaleX="0.3"/>
+					<s:VGroup>
+						<s:CheckBox id="frameSkipCheckBox" label="Frame Skip"/>
+					</s:VGroup>
+					<s:Label text="|" paddingLeft="25" paddingRight="25" fontSize="40" fontFamily="Arial" color="#555555" scaleX="0.3"/>
+					<s:VGroup>
+						<s:CheckBox id="scaleCheckBox" label="Scale"/>
+						<s:HGroup verticalAlign="middle" 
+								  visible="{scaleCheckBox.selected}" includeInLayout="{scaleCheckBox.selected}">
+							<s:HSlider id="theScale" minimum="0" maximum="100"  width="100" value="100"/>
+						</s:HGroup>
+					</s:VGroup>
+					<s:Label text="|" paddingLeft="25" paddingRight="25" fontSize="40" fontFamily="Arial" color="#555555" scaleX="0.3"/>
+					<s:VGroup>
+						<s:CheckBox id="aslinkCheckBox" label="Load MC from AS link"/>
+						<s:HGroup verticalAlign="middle" 
+								  visible="{aslinkCheckBox.selected}" includeInLayout="{aslinkCheckBox.selected}">
+							<s:Label text="AS link:"/>
+							<s:TextInput id="aslink" width="120" text="" maxChars="100"/>
+						</s:HGroup>
+					</s:VGroup>
+				</s:HGroup>
+			</s:VGroup>
+		</s:BorderContainer>
+		
+		<s:HGroup width="800" paddingTop="20" paddingBottom="20">
+			<s:HGroup width="600" horizontalAlign="center">
+				<s:Button id="convertBtn" label="Start Convert" click="startConvert()" fontSize="27" width="300" height="60"></s:Button>
+			</s:HGroup>
+			<s:VGroup paddingRight="20">
+				<s:Button id="openOutputBtn" label="Open Output Folder" click="openOutputFolder()" width="150"></s:Button>
+				<s:Button id="aboutBtn" label="About" click="showAbout()" width="150"></s:Button>
+			</s:VGroup>
+		</s:HGroup>
+		
+		<s:TextArea id="logField" editable="false" width="800" height="320" borderColor="#888888">
+		</s:TextArea>
+	</s:VGroup>
+</s:WindowedApplication>

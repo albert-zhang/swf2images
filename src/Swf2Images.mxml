@@ -461,6 +461,7 @@
 					<s:Label text="|" paddingLeft="25" paddingRight="25" fontSize="40" fontFamily="Arial" color="#555555" scaleX="0.3"/>
 					<s:VGroup>
 						<s:CheckBox id="fixedSizeCheckBox" label="Fixed Image Size"/>
+						<s:CheckBox id="mergeCheckBox" label="Merge Results"/>
 					</s:VGroup>
 					<s:Label text="|" paddingLeft="25" paddingRight="25" fontSize="40" fontFamily="Arial" color="#555555" scaleX="0.3"/>
 					<s:VGroup>

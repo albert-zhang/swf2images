@@ -123,8 +123,8 @@ package
 			var expdW:int = 0;
 			var expdH:int = 0;
 			if(expandForFilters){
-				expdW = 100;
-				expdH = 100;
+				expdW = 200;
+				expdH = 200;
 			}
 			
 			for(var i:int=1; i<=t; i++){

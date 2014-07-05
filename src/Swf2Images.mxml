@@ -106,7 +106,10 @@
 				
 				if(destFolderF.exists){
 					if(destFolderF.isDirectory){
-						Alert.show("Output folder already exist, delete it and continue?", "Delete Confirmation", 
+						var wrnstr:String = "Output folder already exist, delete it and continue?" +
+							"\n\n\n删除警告！" +
+							"\n\n请注意，输出的文件夹整个将会被删除掉，包括里面的所有文件！确定要继续么？\n\n\n";
+						Alert.show(wrnstr, "Delete Confirmation", 
 							Alert.YES | Alert.NO, null, onConfirmOverwrite);
 					}else{
 						
